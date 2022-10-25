@@ -50,6 +50,9 @@ class FetchNode(Node):
         ),
     }
 
+    NUM_MATCHES_THRESHOLD = 10
+    GOOD_MATCH_THRESHOLD = 0.5
+
     def __init__(self):
         super.__init__('fetch_node')
         timer_period = 0.1
@@ -88,27 +91,61 @@ class FetchNode(Node):
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings)
         return key
 
+    def record_reference_img(self, image):
+        self.reference_image = image
+        gray_img = cv.cvtColor(self.reference_image, cv.COLOR_BGR2GRAY)
+        self.reference_kps, self.reference_descs = self.orb.detectAndCompute(gray_img, None)
+        
+    def drive_to_person(self):
+        try:
+            while True:
+                self.key = self.get_key()
+
+                if self.key == "\x03":
+                    self.vel_pub.publish(self.key_to_vel["s"])
+                    raise KeyboardInterrupt
+                if self.key in self.key_to_vel.keys():
+                    self.vel_pub.publish(self.key_to_vel[self.key])
+        except KeyboardInterrupt:
+            return
+
+    def look_for_person(self):
+        gray_img = cv.cvtColor(self.image, cv.COLOR_BGR2GRAY)
+        curr_kps, curr_descs = self.orb.detectAndCompute(gray_img, None)
+        
+        matches = self.flann.knnMatch(self.reference_descs, curr_descs, 2)
+
+        num_matches = 0
+
+        for m, n in matches:
+            if m.distance < self.GOOD_MATCH_THRESHOLD * n.distance:
+                num_matches += 1
+        
+        if num_matches > self.NUM_MATCHES_THRESHOLD:
+            self.vel_pub.publish(self.key_to_vel["s"])
+            self.state = State.FOLLOWING_PERSON
+        else:
+            self.vel_pub.publish(self.key_to_vel["d"])
+        return
+
+    def drive_back_to_person(self):
+        self.vel_pub.publish(self.key_to_vel["w"])
+        return
+
+
     def run_loop(self):
         if self.state == State.INIT_FINDING_PERSON:
-            try:
-                while True:
-                    self.key = self.get_key()
-
-                    if self.key == "\x03":
-                        self.vel_pub.publish(self.key_to_vel["s"])
-                        raise KeyboardInterrupt
-                    if self.key in self.key_to_vel.keys():
-                        self.vel_pub.publish(self.key_to_vel[self.key])
-            except KeyboardInterrupt:
-                self.state = State.PERSON_FOUND
+            self.drive_to_peron()
+            self.state = State.PERSON_FOUND
         elif self.state == State.PERSON_FOUND:
-            self.reference_image = self.image
-            self.reference_kps, self.reference_descs = self.orb.detectAndCompute(self.reference_image, None)
+            self.record_reference_img(self.image)
             self.state = State.FOLLOWING_BALL
+        elif self.state == State.FOLLOWING_BALL:
+            pass
         elif self.state == State.FINDING_PERSON:
-            pass
+            self.look_for_person()
         elif self.state == State.FOLLOWING_PERSON:
-            pass
+            self.drive_back_to_person()
         elif self.state == State.PERSON_FOUND:
             pass
 
