@@ -3,6 +3,8 @@ import termios
 import tty
 
 import select
+
+from torch import fake_quantize_per_tensor_affine
 import rclpy
 from rclpy.node import Node
 import numpy as np
@@ -10,6 +12,8 @@ import cv2 as cv
 from enum import Enum
 from geometry_msgs.msg import Vector3, Twist
 from sensor_msgs.msg import Image
+from neato2_interfaces.msg import Bump
+from cv_bridge import CvBridge
 
 class State(Enum):
     INIT_FINDING_PERSON = 0
@@ -54,19 +58,28 @@ class FetchNode(Node):
     GOOD_MATCH_THRESHOLD = 0.5
 
     def __init__(self):
-        super.__init__('fetch_node')
+        super().__init__('fetch_node')
         timer_period = 0.1
         self.timer = self.create_timer(timer_period, self.run_loop)
-        self.state = State.FINDING_PERSON
+        self.state = State.PERSON_FOUND
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.cam_sub = self.create_subscription(Image, "camera/image_raw", self.process_image, 10)
+        self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
         self.key = None
         self.settings = termios.tcgetattr(sys.stdin)
         self.image = None
         self.reference_image = None
         self.reference_kps = None
         self.reference_descs = None
+        self.bump = False
+        self.bridge = CvBridge()
         self.initialize_cv_algorithms()
+
+    def process_bump(self, msg: Bump):
+        if msg.left_front or msg.right_front or msg.left_side or msg.right_side:
+            self.bump = True
+        else:
+            self.bump = False
 
     def initialize_cv_algorithms(self):
         self.orb = cv.ORB_create()
@@ -79,7 +92,7 @@ class FetchNode(Node):
         self.flann = cv.FlannBasedMatcher(index_params, {})
 
     def process_image(self, msg: Image):
-        self.image = msg.data
+        self.image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
     def get_key(self):
         """
@@ -91,8 +104,9 @@ class FetchNode(Node):
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings)
         return key
 
-    def record_reference_img(self, image):
-        self.reference_image = image
+    def record_reference_img(self):
+        print(np.shape(self.image))
+        self.reference_image = self.image
         gray_img = cv.cvtColor(self.reference_image, cv.COLOR_BGR2GRAY)
         self.reference_kps, self.reference_descs = self.orb.detectAndCompute(gray_img, None)
         
@@ -134,12 +148,14 @@ class FetchNode(Node):
 
 
     def run_loop(self):
+        print(self.state)
         if self.state == State.INIT_FINDING_PERSON:
-            self.drive_to_peron()
+            self.drive_to_person()
             self.state = State.PERSON_FOUND
         elif self.state == State.PERSON_FOUND:
-            self.record_reference_img(self.image)
-            self.state = State.FOLLOWING_BALL
+            self.record_reference_img()
+            # self.state = State.FOLLOWING_BALL
+            self.state = State.FINDING_PERSON
         elif self.state == State.FOLLOWING_BALL:
             pass
         elif self.state == State.FINDING_PERSON:
