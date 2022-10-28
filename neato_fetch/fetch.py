@@ -55,7 +55,7 @@ class FetchNode(Node):
     }
 
     NUM_MATCHES_THRESHOLD = 10
-    GOOD_MATCH_THRESHOLD = 0.5
+    GOOD_MATCH_THRESHOLD = 0.75
 
     def __init__(self):
         super().__init__('fetch_node')
@@ -65,6 +65,7 @@ class FetchNode(Node):
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.cam_sub = self.create_subscription(Image, "camera/image_raw", self.process_image, 10)
         self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
+        self.debug_img_pub = self.create_publisher(Image, "cv_debug", 10)
         self.key = None
         self.settings = termios.tcgetattr(sys.stdin)
         self.image = None
@@ -84,7 +85,7 @@ class FetchNode(Node):
     def initialize_cv_algorithms(self):
         self.orb = cv.ORB_create()
         index_params = dict(
-            algoirthm=6,
+            algorithm=6,
             table_number=6,
             key_size=12,
             multi_probe_level=1
@@ -114,11 +115,11 @@ class FetchNode(Node):
         try:
             while True:
                 self.key = self.get_key()
-
                 if self.key == "\x03":
                     self.vel_pub.publish(self.key_to_vel["s"])
                     raise KeyboardInterrupt
                 if self.key in self.key_to_vel.keys():
+                    print(self.key_to_vel[self.key])
                     self.vel_pub.publish(self.key_to_vel[self.key])
         except KeyboardInterrupt:
             return
@@ -126,21 +127,33 @@ class FetchNode(Node):
     def look_for_person(self):
         gray_img = cv.cvtColor(self.image, cv.COLOR_BGR2GRAY)
         curr_kps, curr_descs = self.orb.detectAndCompute(gray_img, None)
-        
+
         matches = self.flann.knnMatch(self.reference_descs, curr_descs, 2)
 
         num_matches = 0
 
-        for m, n in matches:
+        matchesMask = [[0,0] for i in range(len(matches))]
+
+        if len(np.shape(matches)) != 2:
+            return
+        for i, (m, n) in enumerate(matches):
             if m.distance < self.GOOD_MATCH_THRESHOLD * n.distance:
                 num_matches += 1
-        
-        if num_matches > self.NUM_MATCHES_THRESHOLD:
-            self.vel_pub.publish(self.key_to_vel["s"])
-            self.state = State.FOLLOWING_PERSON
-        else:
-            self.vel_pub.publish(self.key_to_vel["d"])
-        return
+                matchesMask[i]=[1,0]
+
+        draw_params = dict(matchColor = (0,255,0),
+            singlePointColor = (255,0,0),
+            matchesMask = matchesMask,
+            flags = cv.DrawMatchesFlags_DEFAULT)  
+        corrected_img = cv.drawMatchesKnn(self.reference_image, self.reference_kps, self.image, curr_kps, matches, None, **draw_params)
+        cv.imshow('test', corrected_img)
+        cv.waitKey(1)
+        # if num_matches > self.NUM_MATCHES_THRESHOLD:
+        #     self.vel_pub.publish(self.key_to_vel["s"])
+            # self.state = State.FOLLOWING_PERSON
+        # else:
+            # self.vel_pub.publish(self.key_to_vel["d"])
+        print(num_matches)
 
     def drive_back_to_person(self):
         self.vel_pub.publish(self.key_to_vel["w"])
@@ -164,8 +177,6 @@ class FetchNode(Node):
             self.drive_back_to_person()
         elif self.state == State.PERSON_FOUND:
             pass
-
-            
 
     def calculate_keypoints(self, image):
         pass
