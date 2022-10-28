@@ -18,10 +18,12 @@ from cv_bridge import CvBridge
 class State(Enum):
     INIT_FINDING_PERSON = 0
     PERSON_FOUND = 1
-    FOLLOWING_BALL = 2
-    FINDING_PERSON = 3
-    FOLLOWING_PERSON = 4
-    REACHED_PERSON = 5
+    INIT_FINDING_BALL = 2
+    BALL_FOUND = 3
+    FOLLOWING_BALL = 4
+    FINDING_PERSON = 5
+    FOLLOWING_PERSON = 6
+    REACHED_PERSON = 7
 
 class FetchNode(Node):
     key_to_vel = {
@@ -69,7 +71,8 @@ class FetchNode(Node):
         self.key = None
         self.settings = termios.tcgetattr(sys.stdin)
         self.image = None
-        self.reference_image = None
+        self.person_reference_image = None
+        self.ball_reference_image = None
         self.reference_kps = None
         self.reference_descs = None
         self.bump = False
@@ -104,14 +107,12 @@ class FetchNode(Node):
         key = sys.stdin.read(1)
         termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings)
         return key
-
-    def record_reference_img(self):
-        print(np.shape(self.image))
-        self.reference_image = self.image
-        gray_img = cv.cvtColor(self.reference_image, cv.COLOR_BGR2GRAY)
+    
+    def get_kps_descs(self, image):
+        gray_img = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         self.reference_kps, self.reference_descs = self.orb.detectAndCompute(gray_img, None)
         
-    def drive_to_person(self):
+    def drive_to_object(self):
         try:
             while True:
                 self.key = self.get_key()
@@ -159,16 +160,32 @@ class FetchNode(Node):
         self.vel_pub.publish(self.key_to_vel["w"])
         return
 
+    def look_for_ball(self):
+        gray_img = cv.cvtColor(self.image, cv.COLOR_BGR2GRAY)
+
+        pass
+    
+    def drive_to_ball(self):
+        pass
+
+
 
     def run_loop(self):
         print(self.state)
         if self.state == State.INIT_FINDING_PERSON:
-            self.drive_to_person()
+            self.drive_to_object()
             self.state = State.PERSON_FOUND
         elif self.state == State.PERSON_FOUND:
-            self.record_reference_img()
+            self.person_reference_image = self.image
+            self.get_kps_descs(self.person_reference_image)
+            self.state = State.INIT_FINDING_BALL
+        elif self.state == State.INIT_FINDING_BALL:
+            self.drive_to_object()
+            self.state = State.BALL_FOUND
+        elif self.state == State.BALL_FOUND:
+            self.ball_reference_image = self.image
+            self.get_kps_descs(self.ball_reference_image)
             # self.state = State.FOLLOWING_BALL
-            self.state = State.FINDING_PERSON
         elif self.state == State.FOLLOWING_BALL:
             pass
         elif self.state == State.FINDING_PERSON:
