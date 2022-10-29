@@ -3,6 +3,7 @@ import termios
 import tty
 
 import select
+import time
 
 from torch import fake_quantize_per_tensor_affine
 import rclpy
@@ -59,6 +60,8 @@ class FetchNode(Node):
 
     NUM_MATCHES_THRESHOLD = 10
     GOOD_MATCH_THRESHOLD = 0.75
+    P_CONSTANT = 500
+    IMG_WIDTH = 384
 
     def __init__(self):
         super().__init__('fetch_node')
@@ -113,7 +116,7 @@ class FetchNode(Node):
         gray_img = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         self.reference_kps, self.reference_descs = self.orb.detectAndCompute(gray_img, None)
         
-    def drive_to_object(self):
+    def object_drive(self):
         try:
             while True:
                 self.key = self.get_key()
@@ -163,28 +166,32 @@ class FetchNode(Node):
     def drive_back_to_person(self):
         self.vel_pub.publish(self.key_to_vel["w"])
         return
-
-    def look_for_ball(self):
-        gray_img = cv.cvtColor(self.image, cv.COLOR_BGR2GRAY)
-
-        pass
     
     def drive_to_ball(self):
         pass
 
-
+    def drive_to_bounding_box(self, center_x):
+        self.pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(self.IMG_WIDTH-center_x)/self.P_CONSTANT)))
+        if self.bump and self.state == State.FOLLOWING_BALL:
+            self.vel_pub.publish(self.key_to_vel["s"])
+            time.sleep(1)
+            self.vel_pub.publish(self.key_to_vel["w"])
+            self.state == State.FINDING_PERSON
+        else:
+            self.vel_pub.publish(self.key_to_vel["s"])
+            self.state == State.PERSON_FOUND
 
     def run_loop(self):
         print(self.state)
         if self.state == State.INIT_FINDING_PERSON:
-            self.drive_to_object()
+            self.object_drive()
             self.state = State.PERSON_FOUND
         elif self.state == State.PERSON_FOUND:
             self.person_reference_image = self.image
             self.get_kps_descs(self.person_reference_image)
             self.state = State.INIT_FINDING_BALL
         elif self.state == State.INIT_FINDING_BALL:
-            self.drive_to_object()
+            self.object_drive()
             self.state = State.BALL_FOUND
         elif self.state == State.BALL_FOUND:
             self.ball_reference_image = self.image
@@ -193,11 +200,13 @@ class FetchNode(Node):
         elif self.state == State.FINDING_BALL:
             self.look_for_object()
         elif self.state == State.FOLLOWING_BALL:
+            # self.drive_to_bounding_box(ball_center_x)
             pass
         elif self.state == State.FINDING_PERSON:
             self.look_for_object()
         elif self.state == State.FOLLOWING_PERSON:
-            self.drive_back_to_person()
+            # self.drive_to_bounding_box(person_center_x)
+            pass
         elif self.state == State.PERSON_FOUND:
             pass
 
