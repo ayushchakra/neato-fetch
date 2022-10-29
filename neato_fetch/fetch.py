@@ -20,10 +20,11 @@ class State(Enum):
     PERSON_FOUND = 1
     INIT_FINDING_BALL = 2
     BALL_FOUND = 3
-    FOLLOWING_BALL = 4
-    FINDING_PERSON = 5
-    FOLLOWING_PERSON = 6
-    REACHED_PERSON = 7
+    FINDING_BALL = 4
+    FOLLOWING_BALL = 5
+    FINDING_PERSON = 6
+    FOLLOWING_PERSON = 7
+    REACHED_PERSON = 8
 
 class FetchNode(Node):
     key_to_vel = {
@@ -125,8 +126,8 @@ class FetchNode(Node):
         except KeyboardInterrupt:
             return
 
-    def look_for_person(self):
-        gray_img = cv.cvtColor(self.image, cv.COLOR_BGR2GRAY)
+    def look_for_object(self, image):
+        gray_img = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         curr_kps, curr_descs = self.orb.detectAndCompute(gray_img, None)
 
         matches = self.flann.knnMatch(self.reference_descs, curr_descs, 2)
@@ -151,6 +152,9 @@ class FetchNode(Node):
         cv.waitKey(1)
         # if num_matches > self.NUM_MATCHES_THRESHOLD:
         #     self.vel_pub.publish(self.key_to_vel["s"])
+            # if self.state == State.FINDING_BALL:
+            #     self.state = State.FOLLOWING_BALL
+            # else:
             # self.state = State.FOLLOWING_PERSON
         # else:
             # self.vel_pub.publish(self.key_to_vel["d"])
@@ -185,11 +189,13 @@ class FetchNode(Node):
         elif self.state == State.BALL_FOUND:
             self.ball_reference_image = self.image
             self.get_kps_descs(self.ball_reference_image)
-            # self.state = State.FOLLOWING_BALL
+            self.state = State.FINDING_BALL
+        elif self.state == State.FINDING_BALL:
+            self.look_for_object()
         elif self.state == State.FOLLOWING_BALL:
             pass
         elif self.state == State.FINDING_PERSON:
-            self.look_for_person()
+            self.look_for_object()
         elif self.state == State.FOLLOWING_PERSON:
             self.drive_back_to_person()
         elif self.state == State.PERSON_FOUND:
