@@ -5,7 +5,6 @@ import tty
 import select
 import time
 
-from torch import fake_quantize_per_tensor_affine
 import rclpy
 from rclpy.node import Node
 import numpy as np
@@ -181,6 +180,16 @@ class FetchNode(Node):
             self.vel_pub.publish(self.key_to_vel["s"])
             self.state == State.PERSON_FOUND
 
+    def celebration(self):          
+        self.vel_pub.publish(self.key_to_vel["x"])
+        time.sleep(1)
+        while self.bump == False:
+            self.vel_pub.publish(self.key_to_vel["a"])
+            time.sleep(0.5)
+            self.vel_pub.publish(self.key_to_vel["d"])
+            time.sleep(0.5)
+        self.vel_pub.publish(self.key_to_vel["s"])
+
     def run_loop(self):
         print(self.state)
         if self.state == State.INIT_FINDING_PERSON:
@@ -208,7 +217,7 @@ class FetchNode(Node):
             # self.drive_to_bounding_box(person_center_x)
             pass
         elif self.state == State.PERSON_FOUND:
-            pass
+            self.celebration()
 
     def calculate_keypoints(self, image):
         pass
