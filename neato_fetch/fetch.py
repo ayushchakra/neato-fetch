@@ -69,9 +69,8 @@ class FetchNode(Node):
         ),
     }
 
-    NUM_MATCHES_THRESHOLD = 10
-    GOOD_MATCH_THRESHOLD = 0.6
-    P_MATCHES_CONSTANT = 200
+    GOOD_MATCH_THRESHOLD = .9
+    P_MATCHES_CONSTANT = 500
     P_NO_MATCHES_CONSTANT = 1000
 
     def __init__(self):
@@ -179,7 +178,9 @@ class FetchNode(Node):
             return
 
     def drive_to_object(self, ref_center_x, curr_center_x, p_controller):
-        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=-(curr_center_x-ref_center_x)/p_controller)))
+        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(512-curr_center_x)/p_controller)))
+        # print((curr_center_x-ref_center_x)/p_controller)
+        pass
 
     def celebration(self):          
         self.vel_pub.publish(self.key_to_vel["x"])
@@ -246,7 +247,9 @@ class FetchNode(Node):
             return
         avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
-        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_NO_MATCHES_CONSTANT if len(matched_ref_kps) < 3 else self.P_MATCHES_CONSTANT)
+        print(avg_ref_kp_x, avg_curr_kp_x)
+        # self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_NO_MATCHES_CONSTANT if len(matched_ref_kps) < 3 else self.P_MATCHES_CONSTANT)
+        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_MATCHES_CONSTANT)
         if self.bump:
             self.neatoState = NeatoState.TRACK_PERSON
 
