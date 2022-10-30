@@ -105,8 +105,8 @@ class FetchNode(Node):
         self.person_descs = []
 
     def process_scan(self, msg: LaserScan):
-        filtered_dist = [x for x in msg.ranges[-20:] + msg.ranges[:20] if x != 0.0]
-        if len(filtered_dist) > 0 and np.min(filtered_dist) < .3:
+        filtered_dist = [x for x in msg.ranges[-30:] + msg.ranges[:30] if x != 0.0]
+        if len(filtered_dist) > 0 and np.min(filtered_dist) < .4:
             self.bump = True
         else:
             self.bump = False
