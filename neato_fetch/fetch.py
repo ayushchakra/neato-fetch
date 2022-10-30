@@ -11,7 +11,7 @@ import numpy as np
 import cv2 as cv
 from enum import Enum
 from geometry_msgs.msg import Vector3, Twist
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, LaserScan
 from neato2_interfaces.msg import Bump
 from cv_bridge import CvBridge
 
@@ -70,8 +70,9 @@ class FetchNode(Node):
     }
 
     NUM_MATCHES_THRESHOLD = 10
-    GOOD_MATCH_THRESHOLD = 0.75
-    P_CONSTANT = 100
+    GOOD_MATCH_THRESHOLD = 0.6
+    P_MATCHES_CONSTANT = 200
+    P_NO_MATCHES_CONSTANT = 1000
 
     def __init__(self):
         super().__init__('fetch_node')
@@ -81,7 +82,8 @@ class FetchNode(Node):
         self.drawBoxState = DrawBoxState.GET_BALL_CORNER_ONE
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.cam_sub = self.create_subscription(Image, "camera/image_raw", self.process_image, 10)
-        self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
+        # self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
+        self.scan_sub = self.create_subscription(LaserScan, "scan", self.process_scan, 10)
         self.debug_img_pub = self.create_publisher(Image, "cv_debug", 10)
         self.key = None
         self.settings = termios.tcgetattr(sys.stdin)
@@ -103,12 +105,19 @@ class FetchNode(Node):
         self.person_kps = []
         self.person_descs = []
 
-    def process_bump(self, msg: Bump):
-        if msg.left_front == 1 or msg.right_front == 1 or msg.left_side == 1 or msg.right_side == 1:
+    def process_scan(self, msg: LaserScan):
+        filtered_dist = [x for x in msg.ranges[-20:] + msg.ranges[:20] if x != 0.0]
+        if len(filtered_dist) > 0 and np.min(filtered_dist) < .3:
             self.bump = True
         else:
             self.bump = False
-        print(self.bump)
+
+    # def process_bump(self, msg: Bump):
+    #     if msg.left_front == 1 or msg.right_front == 1 or msg.left_side == 1 or msg.right_side == 1:
+    #         self.bump = True
+    #         print(self.bump)
+    #     else:
+    #         self.bump = False
 
     def initialize_cv_algorithms(self):
         self.orb = cv.ORB_create()
@@ -169,8 +178,8 @@ class FetchNode(Node):
             self.neatoState = NeatoState.ANALYZE_REF_IMAGE
             return
 
-    def drive_to_object(self, ref_center_x, curr_center_x):
-        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=-(curr_center_x-ref_center_x)/self.P_CONSTANT)))
+    def drive_to_object(self, ref_center_x, curr_center_x, p_controller):
+        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=-(curr_center_x-ref_center_x)/p_controller)))
 
     def celebration(self):          
         self.vel_pub.publish(self.key_to_vel["x"])
@@ -207,17 +216,28 @@ class FetchNode(Node):
             cv.waitKey(5)
         
     def get_matches(self, ref_kps, ref_descs):
-        curr_kps, curr_descs = self.get_kps_descs(self.image)
-        matches = self.flann.knnMatch(ref_descs, curr_descs, 2)
         ref_kp_matches = []
         curr_kp_matches = []
-        if len(np.shape(matches)) != 2:
-            return ref_kp_matches, curr_kp_matches
-        print(np.shape(matches))
-        for (dmatch_one, dmatch_two) in matches:
-            if dmatch_one.distance < self.GOOD_MATCH_THRESHOLD * dmatch_two.distance:
-                ref_kp_matches.append(ref_kps[dmatch_one.queryIdx])
-                curr_kp_matches.append(curr_kps[dmatch_one.trainIdx])
+
+        try:
+            curr_kps, curr_descs = self.get_kps_descs(self.image)
+            matches = self.flann.knnMatch(ref_descs, curr_descs, 2)
+            matchesMask = [[0,0] for i in range(len(matches))]
+            for i, (dmatch_one, dmatch_two) in enumerate(matches):
+                if dmatch_one.distance < self.GOOD_MATCH_THRESHOLD * dmatch_two.distance:
+                    ref_kp_matches.append(ref_kps[dmatch_one.queryIdx])
+                    curr_kp_matches.append(curr_kps[dmatch_one.trainIdx])
+                    matchesMask[i] = [1,0]
+            draw_params = dict(matchColor = (0,255,0),
+                    singlePointColor = (255,0,0),
+                    matchesMask = matchesMask,
+                    flags = cv.DrawMatchesFlags_DEFAULT)
+            corrected_img = cv.drawMatchesKnn(self.reference_image,ref_kps,self.image,curr_kps,matches,None,**draw_params)
+            cv.imshow("test", corrected_img)
+            cv.waitKey(5)
+
+        except:
+            pass
         return ref_kp_matches, curr_kp_matches
 
     def drive_to_ball(self):
@@ -226,12 +246,14 @@ class FetchNode(Node):
             return
         avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
-        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
+        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_NO_MATCHES_CONSTANT if len(matched_ref_kps) < 3 else self.P_MATCHES_CONSTANT)
         if self.bump:
             self.neatoState = NeatoState.TRACK_PERSON
 
     def drive_to_person(self):
         matched_ref_kps, matched_curr_kps = self.get_matches(self.person_kps, self.person_descs)
+        if len(matched_curr_kps) == 0:
+            return
         avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
         self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
