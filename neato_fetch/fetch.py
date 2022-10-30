@@ -259,7 +259,9 @@ class FetchNode(Node):
             return
         avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
-        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
+        print(avg_ref_kp_x, avg_curr_kp_x)
+        # self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_NO_MATCHES_CONSTANT if len(matched_ref_kps) < 3 else self.P_MATCHES_CONSTANT)
+        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_MATCHES_CONSTANT)
         if self.bump:
             self.neatoState = NeatoState.CELEBRATION
 
