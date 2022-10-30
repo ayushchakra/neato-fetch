@@ -16,15 +16,20 @@ from neato2_interfaces.msg import Bump
 from cv_bridge import CvBridge
 
 class State(Enum):
-    INIT_FINDING_PERSON = 0
-    PERSON_FOUND = 1
-    INIT_FINDING_BALL = 2
-    BALL_FOUND = 3
-    FINDING_BALL = 4
-    FOLLOWING_BALL = 5
-    FINDING_PERSON = 6
-    FOLLOWING_PERSON = 7
-    REACHED_PERSON = 8
+    DRIVE_NEATO_START = 0
+    DRAW_BOUNDING_BOXES = 1
+    TRACK_BALL = 2
+    TRACK_PERSON = 3
+    CELBRATION = 4
+    # INIT_FINDING_PERSON = 0
+    # PERSON_FOUND = 1
+    # INIT_FINDING_BALL = 2
+    # BALL_FOUND = 3
+    # FINDING_BALL = 4
+    # FOLLOWING_BALL = 5
+    # FINDING_PERSON = 6
+    # FOLLOWING_PERSON = 7
+    # REACHED_PERSON = 8
 
 class FetchNode(Node):
     key_to_vel = {
@@ -66,7 +71,7 @@ class FetchNode(Node):
         super().__init__('fetch_node')
         timer_period = 0.1
         self.timer = self.create_timer(timer_period, self.run_loop)
-        self.state = State.PERSON_FOUND
+        self.state = State.INIT_FINDING_PERSON
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.cam_sub = self.create_subscription(Image, "camera/image_raw", self.process_image, 10)
         self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
@@ -218,6 +223,31 @@ class FetchNode(Node):
             pass
         elif self.state == State.PERSON_FOUND:
             self.celebration()
+        if self.state == State.DRIVE_NEATO_START
+        # if self.state == State.INIT_FINDING_PERSON:
+        #     self.drive_to_object()
+        #     self.state = State.PERSON_FOUND
+        # elif self.state == State.PERSON_FOUND:
+        #     self.person_reference_image = self.image
+        #     self.get_kps_descs(self.person_reference_image)
+        #     self.state = State.INIT_FINDING_BALL
+        # elif self.state == State.INIT_FINDING_BALL:
+        #     self.drive_to_object()
+        #     self.state = State.BALL_FOUND
+        # elif self.state == State.BALL_FOUND:
+        #     self.ball_reference_image = self.image
+        #     self.get_kps_descs(self.ball_reference_image)
+        #     self.state = State.FINDING_BALL
+        # elif self.state == State.FINDING_BALL:
+        #     self.look_for_object()
+        # elif self.state == State.FOLLOWING_BALL:
+        #     pass
+        # elif self.state == State.FINDING_PERSON:
+        #     self.look_for_object()
+        # elif self.state == State.FOLLOWING_PERSON:
+        #     self.drive_back_to_person()
+        # elif self.state == State.PERSON_FOUND:
+        #     pass
 
     def calculate_keypoints(self, image):
         pass
