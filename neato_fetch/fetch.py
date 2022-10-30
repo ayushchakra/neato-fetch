@@ -15,12 +15,12 @@ from sensor_msgs.msg import Image
 from neato2_interfaces.msg import Bump
 from cv_bridge import CvBridge
 
-class State(Enum):
+class NeatoState(Enum):
     DRIVE_NEATO_START = 0
-    DRAW_BOUNDING_BOXES = 1
+    ANALYZE_REF_IMAGE = 1
     TRACK_BALL = 2
     TRACK_PERSON = 3
-    CELBRATION = 4
+    CELEBRATION = 4
     # INIT_FINDING_PERSON = 0
     # PERSON_FOUND = 1
     # INIT_FINDING_BALL = 2
@@ -30,6 +30,12 @@ class State(Enum):
     # FINDING_PERSON = 6
     # FOLLOWING_PERSON = 7
     # REACHED_PERSON = 8
+
+class DrawBoxState(Enum):
+    GET_PERSON_CORNER_ONE = 0
+    GET_PERSON_CORNER_TWO = 1
+    GET_BALL_CORNER_ONE = 2
+    GET_BALL_CORNER_TWO = 3
 
 class FetchNode(Node):
     key_to_vel = {
@@ -71,7 +77,8 @@ class FetchNode(Node):
         super().__init__('fetch_node')
         timer_period = 0.1
         self.timer = self.create_timer(timer_period, self.run_loop)
-        self.state = State.INIT_FINDING_PERSON
+        self.neatoState = NeatoState.DRIVE_NEATO_START
+        self.drawBoxState = DrawBoxState.GET_BALL_CORNER_ONE
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.cam_sub = self.create_subscription(Image, "camera/image_raw", self.process_image, 10)
         self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
@@ -79,13 +86,21 @@ class FetchNode(Node):
         self.key = None
         self.settings = termios.tcgetattr(sys.stdin)
         self.image = None
-        self.person_reference_image = None
-        self.ball_reference_image = None
+        self.reference_image = None
         self.reference_kps = None
         self.reference_descs = None
         self.bump = False
         self.bridge = CvBridge()
         self.initialize_cv_algorithms()
+        cv.setMouseCallback("Reference Image", self.process_mouse_click)
+        self.ball_corner_one = None
+        self.ball_corner_two = None
+        self.person_corner_one = None
+        self.person_corner_two = None
+        self.ball_kps = []
+        self.ball_descs = []
+        self.person_kps = []
+        self.person_descs = []
 
     def process_bump(self, msg: Bump):
         if msg.left_front or msg.right_front or msg.left_side or msg.right_side:
@@ -117,10 +132,29 @@ class FetchNode(Node):
         return key
     
     def get_kps_descs(self, image):
-        gray_img = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
-        self.reference_kps, self.reference_descs = self.orb.detectAndCompute(gray_img, None)
+        gray_img = cv.cvtCOlor(image, cv.COLOR_BGR2GRAY)
+        kps, descs = self.orb.detectAndCompute(gray_img, None)
+        return kps, descs
+
+    def get_ref_img_kps_descs(self):
+        kps, descs = self.get_kps_descs(self.reference_image)
+
+        for kp, desc in zip(kps, descs):
+            if kp.pt[0] > self.person_corner_one[0] and kp.pt[0] < self.person_corner_two[0] and\
+                kp.pt[1] > self.person_corner_one[1] and kp.pt[1] < self.person_corner_two[1]:
+                self.person_kps.append(kp)
+                self.person_descs.append(desc)
+            if kp.pt[0] > self.ball_corner_one[0] and kp.pt[0] < self.ball_corner_two[0] and\
+                kp.pt[1] > self.ball_corner_one[1] and kp.pt[1] < self.ball_corner_two[1]:
+                self.ball_kps.append(kp)
+                self.ball_descs.append(desc)
+        self.person_kps = np.array(self.person_kps)
+        self.person_descs = np.array(self.person_descs)
+        self.ball_kps = np.array(self.ball_kps)
+        self.ball_kps = np.array(self.ball_descs)
+        self.neatoState = NeatoState.TRACK_BALL
         
-    def object_drive(self):
+    def teleop_to_start(self):
         try:
             while True:
                 self.key = self.get_key()
@@ -131,59 +165,12 @@ class FetchNode(Node):
                     print(self.key_to_vel[self.key])
                     self.vel_pub.publish(self.key_to_vel[self.key])
         except KeyboardInterrupt:
+            self.reference_image = self.image
+            self.neatoState = NeatoState.ANALYZE_REF_IMAGE
             return
 
-    def look_for_object(self, image):
-        gray_img = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
-        curr_kps, curr_descs = self.orb.detectAndCompute(gray_img, None)
-
-        matches = self.flann.knnMatch(self.reference_descs, curr_descs, 2)
-
-        num_matches = 0
-
-        matchesMask = [[0,0] for i in range(len(matches))]
-
-        if len(np.shape(matches)) != 2:
-            return
-        for i, (m, n) in enumerate(matches):
-            if m.distance < self.GOOD_MATCH_THRESHOLD * n.distance:
-                num_matches += 1
-                matchesMask[i]=[1,0]
-
-        draw_params = dict(matchColor = (0,255,0),
-            singlePointColor = (255,0,0),
-            matchesMask = matchesMask,
-            flags = cv.DrawMatchesFlags_DEFAULT)  
-        corrected_img = cv.drawMatchesKnn(self.reference_image, self.reference_kps, self.image, curr_kps, matches, None, **draw_params)
-        cv.imshow('test', corrected_img)
-        cv.waitKey(1)
-        # if num_matches > self.NUM_MATCHES_THRESHOLD:
-        #     self.vel_pub.publish(self.key_to_vel["s"])
-            # if self.state == State.FINDING_BALL:
-            #     self.state = State.FOLLOWING_BALL
-            # else:
-            # self.state = State.FOLLOWING_PERSON
-        # else:
-            # self.vel_pub.publish(self.key_to_vel["d"])
-        print(num_matches)
-
-    def drive_back_to_person(self):
-        self.vel_pub.publish(self.key_to_vel["w"])
-        return
-    
-    def drive_to_ball(self):
-        pass
-
-    def drive_to_bounding_box(self, center_x):
-        self.pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(self.IMG_WIDTH-center_x)/self.P_CONSTANT)))
-        if self.bump and self.state == State.FOLLOWING_BALL:
-            self.vel_pub.publish(self.key_to_vel["s"])
-            time.sleep(1)
-            self.vel_pub.publish(self.key_to_vel["w"])
-            self.state == State.FINDING_PERSON
-        else:
-            self.vel_pub.publish(self.key_to_vel["s"])
-            self.state == State.PERSON_FOUND
+    def drive_to_object(self, ref_center_x, curr_center_x):
+        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(curr_center_x-ref_center_x)/self.P_CONSTANT)))
 
     def celebration(self):          
         self.vel_pub.publish(self.key_to_vel["x"])
@@ -195,63 +182,63 @@ class FetchNode(Node):
             time.sleep(0.5)
         self.vel_pub.publish(self.key_to_vel["s"])
 
+    def process_mouse_click(self, event, x, y, flag, im):
+        if self.neatoState == NeatoState.ANALYZE_REF_IMAGE and event == cv.EVENT_FLAG_LBUTTON:
+            if self.drawBoxState == DrawBoxState.GET_BALL_CORNER_ONE:
+                self.ball_corner_one = (x,y)
+                self.drawBoxState = DrawBoxState.GET_BALL_CORNER_TWO
+            elif self.drawBoxState == DrawBoxState.GET_BALL_CORNER_TWO:
+                self.ball_corner_two = (x,y)
+                self.drawBoxState = DrawBoxState.GET_PERSON_CORNER_ONE
+            elif self.drawBoxState == DrawBoxState.GET_PERSON_CORNER_ONE:
+                self.person_corner_one = (x,y)
+                self.drawBoxState = DrawBoxState.GET_PERSON_CORNER_TWO
+            elif self.drawBoxState == DrawBoxState.GET_PERSON_CORNER_TWO:
+                self.person_corner_two = (x,y)
+
+    def draw_bounding_boxes(self):
+        cv.imshow("Reference Image", self.reference_image)
+        
+    def get_matches(self, ref_kps, ref_descs):
+        curr_kps, curr_descs = self.get_kps_descs(self.image)
+        matches = self.flann.knnMatch(ref_descs, curr_descs, 2)
+        ref_kp_matches = []
+        curr_kp_matches = []
+        for (dmatch_one, dmatch_two) in matches:
+            if dmatch_one.distance < self.GOOD_MATCH_THRESHOLD * dmatch_two.distance:
+                ref_kp_matches.append(ref_kps[dmatch_one.queryIdx])
+                curr_kp_matches.append(curr_kps[dmatch_one.trainIdx])
+        return ref_kp_matches, curr_kp_matches
+
+    def drive_to_ball(self):
+        matched_ref_kps, matched_curr_kps = self.get_matches(self.ball_kps, self.ball_descs)
+        avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
+        avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
+        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
+        if self.bump:
+            self.neatoState = NeatoState.TRACK_PERSON
+
+    def drive_to_person(self):
+        matched_ref_kps, matched_curr_kps = self.get_matches(self.person_kps, self.person_descs)
+        avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
+        avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
+        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
+        if self.bump:
+            self.neatoState = NeatoState.CELEBRATION
+
     def run_loop(self):
-        print(self.state)
-        if self.state == State.INIT_FINDING_PERSON:
-            self.object_drive()
-            self.state = State.PERSON_FOUND
-        elif self.state == State.PERSON_FOUND:
-            self.person_reference_image = self.image
-            self.get_kps_descs(self.person_reference_image)
-            self.state = State.INIT_FINDING_BALL
-        elif self.state == State.INIT_FINDING_BALL:
-            self.object_drive()
-            self.state = State.BALL_FOUND
-        elif self.state == State.BALL_FOUND:
-            self.ball_reference_image = self.image
-            self.get_kps_descs(self.ball_reference_image)
-            self.state = State.FINDING_BALL
-        elif self.state == State.FINDING_BALL:
-            self.look_for_object()
-        elif self.state == State.FOLLOWING_BALL:
-            # self.drive_to_bounding_box(ball_center_x)
-            pass
-        elif self.state == State.FINDING_PERSON:
-            self.look_for_object()
-        elif self.state == State.FOLLOWING_PERSON:
-            # self.drive_to_bounding_box(person_center_x)
-            pass
-        elif self.state == State.PERSON_FOUND:
+        if self.neatoState == NeatoState.DRIVE_NEATO_START:
+            self.teleop_to_start()
+        elif self.neatoState == NeatoState.ANALYZE_REF_IMAGE:
+            self.draw_bounding_boxes()
+            if self.person_corner_two is not None:
+                self.get_ref_img_kps_descs()
+        elif self.neatoState == NeatoState.TRACK_BALL:
+            self.drive_to_ball()
+        elif self.neatoState == NeatoState.TRACK_PERSON:
+            self.drive_to_person()
+        elif self.neatoState == NeatoState.CELEBRATION:
             self.celebration()
-        if self.state == State.DRIVE_NEATO_START
-        # if self.state == State.INIT_FINDING_PERSON:
-        #     self.drive_to_object()
-        #     self.state = State.PERSON_FOUND
-        # elif self.state == State.PERSON_FOUND:
-        #     self.person_reference_image = self.image
-        #     self.get_kps_descs(self.person_reference_image)
-        #     self.state = State.INIT_FINDING_BALL
-        # elif self.state == State.INIT_FINDING_BALL:
-        #     self.drive_to_object()
-        #     self.state = State.BALL_FOUND
-        # elif self.state == State.BALL_FOUND:
-        #     self.ball_reference_image = self.image
-        #     self.get_kps_descs(self.ball_reference_image)
-        #     self.state = State.FINDING_BALL
-        # elif self.state == State.FINDING_BALL:
-        #     self.look_for_object()
-        # elif self.state == State.FOLLOWING_BALL:
-        #     pass
-        # elif self.state == State.FINDING_PERSON:
-        #     self.look_for_object()
-        # elif self.state == State.FOLLOWING_PERSON:
-        #     self.drive_back_to_person()
-        # elif self.state == State.PERSON_FOUND:
-        #     pass
-
-    def calculate_keypoints(self, image):
-        pass
-
 
 def main(args=None):
     rclpy.init(args=args)
