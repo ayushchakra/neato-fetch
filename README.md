@@ -23,8 +23,25 @@ An example of the software architecture's ability to detect matches is shown bel
 ![This is a demo of the FLANN matching algorithm in action.](images/flann_demo.gif)
 
 ## Fetch Workflow
+The main workflow of the neato's fetch behavior is defined by the `NeatoState` finite state machine and executed by the `FetchNode` class. The workflow is as follows:
+1. DRIVE_NEATO_START
+    - The drive neato to start state essentially acts like a teleoperation algorithm for the user to use. It allows them to remotely drive the Neato to the desired start position. This state is ended by a KeyboardInterrupt triggered by the user.
+2. ANALYZE_REF_IMAGE
+    - This state is for establishing the ball and reference images to be tracked throughout the course of this behavior. This state is also dictated by a seperate finite state machine, called `DrawBoxState`. Once the state is initiated, the user is displayed a picture of the current frame, which becomes known as the reference frame. They are then prompted to select 4 points of interest. These 4 points become the bounds for the bounding box about the soccer ball and the person. Once all four have been selected, keypoints and image descriptors are extracted and saved from the respective bounding boxes. This state ends once all four corner positions have been inputted by the user and the image has been analyzed.
+3. TRACK_BALL
+    - This state manages the drive commands for following the soccer ball. The current frame is analyzed for all keypoints and image descriptors and then matched to the ball keypoints and image descriptors that were obtained in the previous state. If not enough matches are made, the Neato is instructed to continue moving in its current direction. If there are enough matches, the matching keypoints are averaged and the Neato is instructed to drive at a constant linear speed (0.2 m/s) and at an angular speed proportional to the difference between the average keypoint position and the center of the camera frame (is also scaled by a tunable constant). This state ends when the LiDAR detects that there is an object within a tunable distance of the Neato.
+4. TRACK_PERSON
+    - This state operates almost exactly the same as the previous state with two exceptions. When obtaining matches, the current frame is compared against the keypoints and image descriptors of the person, not the ball. Additionally, the state starts with a 180 degree rotation to initially guide the Neato back to the person. This state ends when the bump sensor is triggered.
+5. CELEBRATION
+    - Once the Neato successfully bumps into the person, it celebrates its accomplishment by doing a dance! This state ends once it completes the pre-computed dance.
+6. DONE
+    - Once the celebration has completed, the Neato is instructed to stop, signalling that the behavior has been completed.
+
 
 ## Design Decisions
+moving in current direction when not enough matches
+turn 180
+lidar for ball, bump for person
 
 ## Results
 
