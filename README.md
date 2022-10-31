@@ -18,6 +18,10 @@ The ORB algorithm was applied to the initial frame to determine the keypoints an
 
 In order to find matches, we implemented the Fast Library for Approximate Nearest Neighbors. Once again, speed was essential to our software's success, which is why FLANN was chosen as opposed to a more traditional algortim, like a Brute-Force Matcher. The algorithm is optimized for fast nearest neighbor searches, especially on large data sets, reducing runtime. Using FLANN, we found matches between the current frame and the relevant comparator, which instructed the drive commands that were sent to the Neato.
 
+An example of the software architecture's ability to detect matches is shown below:
+
+![This is a demo of the FLANN matching algorithm in action.](images/flann_demo.gif)
+
 ## Fetch Workflow
 
 ## Design Decisions
