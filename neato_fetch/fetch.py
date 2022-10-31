@@ -16,6 +16,10 @@ from neato2_interfaces.msg import Bump
 from cv_bridge import CvBridge
 
 class NeatoState(Enum):
+    """
+    This class defines the different states that the Neato can be in while
+    completing its fetch action.
+    """
     DRIVE_NEATO_START = 0
     ANALYZE_REF_IMAGE = 1
     TRACK_BALL = 2
@@ -24,12 +28,25 @@ class NeatoState(Enum):
     FETCH_DONE = 5
 
 class DrawBoxState(Enum):
+    """
+    This class defines the different states within the NeatoState.ANALYZE_REF_IMAGE
+    state and is used to determine which corner of each bounding box is currently
+    being inputted by the user. 
+    """
     GET_PERSON_CORNER_ONE = 0
     GET_PERSON_CORNER_TWO = 1
     GET_BALL_CORNER_ONE = 2
     GET_BALL_CORNER_TWO = 3
 
 class FetchNode(Node):
+    """
+    This is the main node that dictates the workflow of the neato's fetch behavior.
+    The Node handles the different state transitions through the NeatoState
+    finite state machine and defines the proper actions for each state.
+    """
+
+    # This dictionary is used by the teleop_to_start function to allow for
+    # users to remotely drive the Neato to the intended start location.
     key_to_vel = {
         "q": Twist(
             linear=Vector3(x=0.5, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=1.0)
@@ -60,28 +77,55 @@ class FetchNode(Node):
         ),
     }
 
+    # This defines the threshold for a good match based on the distance between
+    # the two nearest neighbors to the queried point.
     GOOD_MATCH_THRESHOLD = .9
+
+    # This defines the proportional control applied to the angular velocity
+    # of the Neato as it approaches the person and the ball.
     P_CONSTANT = 500
 
+    # This defines the angular range in front of the Neato to analyze in order to
+    # determine if a specific destination has been reached
+    SCAN_BOUND = 30
+
     def __init__(self):
+        """
+        This is the constructor for the FetchNeato Node, which defines the node's
+        publishers and subscribers, along with declaring class variables relevant
+        to each of the neato's states.
+        """
         super().__init__('fetch_node')
-        timer_period = 0.1
-        self.timer = self.create_timer(timer_period, self.run_loop)
+
+        # Instantiates the initial state of the neato
         self.neatoState = NeatoState.DRIVE_NEATO_START
         self.drawBoxState = DrawBoxState.GET_BALL_CORNER_ONE
+
+        # Instantiates a timer to continuously call run_loop
+        timer_period = 0.1
+        self.timer = self.create_timer(timer_period, self.run_loop)
+
+        # Creates message publishers and subscribers to send a receive data
+        # from the Neato
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.cam_sub = self.create_subscription(Image, "camera/image_raw", self.process_image, 10)
         self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
         self.scan_sub = self.create_subscription(LaserScan, "scan", self.process_scan, 10)
-        self.debug_img_pub = self.create_publisher(Image, "cv_debug", 10)
-        self.key = None
-        self.settings = termios.tcgetattr(sys.stdin)
-        self.image = None
-        self.reference_image = None
-        self.reference_kps = None
-        self.reference_descs = None
         self.bump = False
         self.scan = False
+
+        # Defines variables to capture the user's keyboard input for teleop
+        self.key = None
+        self.settings = termios.tcgetattr(sys.stdin)
+
+        # Creates instance variables for tracking, analyzing, and displaying image
+        # features
+        self.image = None
+        self.reference_image = None
+        self.ball_kps = []
+        self.ball_descs = []
+        self.person_kps = []
+        self.person_descs = []
         self.bridge = CvBridge()
         self.initialize_cv_algorithms()
         cv.namedWindow("Reference Image")
@@ -90,25 +134,43 @@ class FetchNode(Node):
         self.ball_corner_two = None
         self.person_corner_one = None
         self.person_corner_two = None
-        self.ball_kps = []
-        self.ball_descs = []
-        self.person_kps = []
-        self.person_descs = []
 
     def process_scan(self, msg: LaserScan):
-        filtered_dist = [x for x in msg.ranges[-30:] + msg.ranges[:30] if x != 0.0]
+        """
+        This is the callback for when a new laser scan is available. The function
+        processes scan values from -SCAN_BOUND to SCAN_BOUND and determines whether
+        any are close enough to consider the Neato as reaching its goal.
+        """
+        # Filters out scans outside of the neato's laser scan range
+        filtered_dist = [x for x in msg.ranges[-self.SCAN_BOUND:] + msg.ranges[:self.SCAN_BOUND] if x != 0.0]
+
         if len(filtered_dist) > 0 and np.min(filtered_dist) < .4:
             self.scan = True
         else:
             self.scan = False
 
     def process_bump(self, msg: Bump):
+        """
+        This is the callback for the bump sensor. If any of the bumps are triggered,
+        self.bump is set to True.
+        """
         if msg.left_front == 1 or msg.right_front == 1 or msg.left_side == 1 or msg.right_side == 1:
             self.bump = True
         else:
             self.bump = False
 
+    def process_image(self, msg: Image):
+        """
+        This is the callback for the image topic, where each received image is
+        converted to an OpenCV image that can be further processed.
+        """
+        self.image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+
     def initialize_cv_algorithms(self):
+        """
+        This function initialized the ORB image descriptor algorithm and the FLANN
+        descriptor matching algorithm, both of which are defined by OpenCV>
+        """
         self.orb = cv.ORB_create()
         index_params = dict(
             algorithm=6,
@@ -117,9 +179,6 @@ class FetchNode(Node):
             multi_probe_level=1
         )
         self.flann = cv.FlannBasedMatcher(index_params, {})
-
-    def process_image(self, msg: Image):
-        self.image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
 
     def get_key(self):
         """
@@ -222,9 +281,8 @@ class FetchNode(Node):
                     matchesMask = matchesMask,
                     flags = cv.DrawMatchesFlags_DEFAULT)
             corrected_img = cv.drawMatchesKnn(self.reference_image,ref_kps,self.image,curr_kps,matches,None,**draw_params)
-            cv.imshow("test", corrected_img)
+            cv.imshow("Detected Matches", corrected_img)
             cv.waitKey(5)
-
         except:
             pass
         return ref_kp_matches, curr_kp_matches
