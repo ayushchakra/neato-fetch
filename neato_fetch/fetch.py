@@ -81,7 +81,7 @@ class FetchNode(Node):
         self.drawBoxState = DrawBoxState.GET_BALL_CORNER_ONE
         self.vel_pub = self.create_publisher(Twist, "cmd_vel", 10)
         self.cam_sub = self.create_subscription(Image, "camera/image_raw", self.process_image, 10)
-        # self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
+        self.bump_sub = self.create_subscription(Bump, "bump", self.process_bump, 10)
         self.scan_sub = self.create_subscription(LaserScan, "scan", self.process_scan, 10)
         self.debug_img_pub = self.create_publisher(Image, "cv_debug", 10)
         self.key = None
@@ -91,6 +91,7 @@ class FetchNode(Node):
         self.reference_kps = None
         self.reference_descs = None
         self.bump = False
+        self.scan = False
         self.bridge = CvBridge()
         self.initialize_cv_algorithms()
         cv.namedWindow("Reference Image")
@@ -107,16 +108,16 @@ class FetchNode(Node):
     def process_scan(self, msg: LaserScan):
         filtered_dist = [x for x in msg.ranges[-30:] + msg.ranges[:30] if x != 0.0]
         if len(filtered_dist) > 0 and np.min(filtered_dist) < .4:
+            self.scan = True
+        else:
+            self.scan = False
+
+    def process_bump(self, msg: Bump):
+        if msg.left_front == 1 or msg.right_front == 1 or msg.left_side == 1 or msg.right_side == 1:
             self.bump = True
+            print(self.bump)
         else:
             self.bump = False
-
-    # def process_bump(self, msg: Bump):
-    #     if msg.left_front == 1 or msg.right_front == 1 or msg.left_side == 1 or msg.right_side == 1:
-    #         self.bump = True
-    #         print(self.bump)
-    #     else:
-    #         self.bump = False
 
     def initialize_cv_algorithms(self):
         self.orb = cv.ORB_create()
@@ -250,7 +251,9 @@ class FetchNode(Node):
         print(avg_ref_kp_x, avg_curr_kp_x)
         # self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_NO_MATCHES_CONSTANT if len(matched_ref_kps) < 3 else self.P_MATCHES_CONSTANT)
         self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_MATCHES_CONSTANT)
-        if self.bump:
+        if self.scan:
+            self.vel_pub.publish(self.key_to_vel["d"])
+            time.sleep(3.14)
             self.neatoState = NeatoState.TRACK_PERSON
 
     def drive_to_person(self):
