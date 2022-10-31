@@ -22,15 +22,6 @@ class NeatoState(Enum):
     TRACK_PERSON = 3
     CELEBRATION = 4
     FETCH_DONE = 5
-    # INIT_FINDING_PERSON = 0
-    # PERSON_FOUND = 1
-    # INIT_FINDING_BALL = 2
-    # BALL_FOUND = 3
-    # FINDING_BALL = 4
-    # FOLLOWING_BALL = 5
-    # FINDING_PERSON = 6
-    # FOLLOWING_PERSON = 7
-    # REACHED_PERSON = 8
 
 class DrawBoxState(Enum):
     GET_PERSON_CORNER_ONE = 0
@@ -70,8 +61,7 @@ class FetchNode(Node):
     }
 
     GOOD_MATCH_THRESHOLD = .9
-    P_MATCHES_CONSTANT = 500
-    P_NO_MATCHES_CONSTANT = 1000
+    P_CONSTANT = 500
 
     def __init__(self):
         super().__init__('fetch_node')
@@ -115,7 +105,6 @@ class FetchNode(Node):
     def process_bump(self, msg: Bump):
         if msg.left_front == 1 or msg.right_front == 1 or msg.left_side == 1 or msg.right_side == 1:
             self.bump = True
-            print(self.bump)
         else:
             self.bump = False
 
@@ -178,10 +167,8 @@ class FetchNode(Node):
             self.neatoState = NeatoState.ANALYZE_REF_IMAGE
             return
 
-    def drive_to_object(self, ref_center_x, curr_center_x, p_controller):
-        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(512-curr_center_x)/p_controller)))
-        # print((curr_center_x-ref_center_x)/p_controller)
-        pass
+    def drive_to_object(self, curr_center_x):
+        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(512-curr_center_x)/self.P_CONSTANT)))
 
     def celebration(self):          
         self.vel_pub.publish(self.key_to_vel["x"])
@@ -248,9 +235,7 @@ class FetchNode(Node):
             return
         avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
-        print(avg_ref_kp_x, avg_curr_kp_x)
-        # self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_NO_MATCHES_CONSTANT if len(matched_ref_kps) < 3 else self.P_MATCHES_CONSTANT)
-        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_MATCHES_CONSTANT)
+        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
         if self.scan:
             self.vel_pub.publish(self.key_to_vel["d"])
             time.sleep(3.14)
@@ -262,9 +247,7 @@ class FetchNode(Node):
             return
         avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
-        print(avg_ref_kp_x, avg_curr_kp_x)
-        # self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_NO_MATCHES_CONSTANT if len(matched_ref_kps) < 3 else self.P_MATCHES_CONSTANT)
-        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x, self.P_MATCHES_CONSTANT)
+        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
         if self.bump:
             self.neatoState = NeatoState.CELEBRATION
 
