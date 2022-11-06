@@ -5,11 +5,23 @@ The purpose of this project was to develop a software architecture that relies o
 In order to accomplish this task, we needed to be able to accurately track the position of the ball within the frame of the Neato's camera. Then, once the ball has been reached, we needed a way to locate and drive to the person who initiated the motion, also based on visual features. This was accomplished by taking a reference image and analyzing it for key points relevant to the ball and the person, which would then be monitored at a frame-by-frame level. The full impementation, which is described below, can be found in this [github repository](https://github.com/ayushchakra/neato-fetch).
 
 ## Problem-Solving Approach
-In order to successfully develop the neato's fetch behavior, we chose to implement an iterative approach in terms of algorithmic robustness and complexity, starting from a simple, inconsistent color tracking algorithm, and scaling to developing an image descriptor tracking algorithm that is far more complex and consistent. This was done in three main stages: color masking, contour detection, and image descriptor tracking. 
+In order to successfully develop the Neato's fetch behavior, we chose to implement an iterative approach in terms of algorithmic robustness and complexity, starting from a simple, inconsistent color tracking algorithm, and scaling to developing an image descriptor tracking algorithm that is far more complex and consistent. This was done in three main stages: color masking, contour detection, and image descriptor tracking. 
 
 ### Color Masking
+Our initial method for isolating and tracking the ball was using color masking to create a binary image. This would have been done using OpenCV's inRange function, which creates a mask of an image based on a specific RGB color range. By doing this, a binary image of the specified color range can be created. 
+
+If we use a distinctly colored ball (i.e. orange) in a plain environment, it is simple to track the ball. With a binary image, we only need to find the average x-coordinate of all the white pixels in a given frame. Subtracting this value from the center x-coordinate will give us the distance the Neato needs to move. Then, we can divide that number by a proportinal constant to determine the speed at which the Neato needs to turn. We can ignore the y-coordinate because we are only moving in regards to one axis.
+
+This tracking method for the ball is what was implemented in the Neato Soccer exercise, and we decided we wanted to explore a different avenue of computer vision.
 
 ### Contour Detection
+
+The second ball tracking method we implmented revolved around contour matching. This was accomplished using OpenCV's findContours, approxPolyDP, and drawContour functions. 
+
+Using the color masking method described in the previous section, a binary image analyzed using the findCountour function. This function identifies contours in the image, and in conjunction with the approxPolyDP function, can identify the specific shape the contours create with reasonable accuracy. However, this method was not accurate in the dynamic environment of the moving ball and an inconsistant background. This gave the contours a significant amount of background noise, which lead us to believe that this method was not the optimal way of tracking the ball.
+
+Erosion and dilation techniques were also applied, but still failed at reasonably identifying the countours and shapes in the image.
+
 
 ### Image Descriptor Tracking
 The final attempted implementation of object tracking was to use a pre-built image descriptor detection and matching algorithm. The selected image descriptor algortihm was Oriented FAST and Rotated BRIEF (ORB). Essentially, ORB is a fusion of Features from Accelerated Segment Test (FAST) keypoint detector and Binary Robust Independent Elementary Features (BRIEF) descriptor. The benefit of ORB is that it is less computationally costly as compared to other common algorithms, such as SIFT and SURF, but still maintains a comparable level of accuracy. This was important as we wished to do object tracking in real-time, which requires us to minimize the lag time between analysis of the current frame and sending commands to the Neato. The algorithm detects keypoints and descriptors based on the relative brightness shift at a given pixel relative to the surrounding pixels.
@@ -39,12 +51,29 @@ The main workflow of the neato's fetch behavior is defined by the `NeatoState` f
 
 
 ## Design Decisions
-moving in current direction when not enough matches
-turn 180
-lidar for ball, bump for person
+There were three interesting design decisions that we made during this project.
+
+Two design decisions we made prior to physically testing the Neato tracking were:
+1. Continuing to turn the Neato in current direction when not enough matches were available.
+    - If the object that the Neato is tracking is out of frame or there are too little matches, the Neato will continue to move at the last speed that was published to it. Since the object is only moving faster than the Neato is turning, but is still in the same direction, the Neato will eventually turn enough to get the object in frame and thus obtain image descriptors.
+2. After completing the `TRACK_BALL` state, the Neato will turn 180 degrees.
+    - This makes it easier for the Neato to create find keypoints on the person. With a direct 180 degree turn, the Neato's camera is facing the person that was identified in the `DRIVE_NEATO_START` state. This mitigates the need of a FIND_PERSON state.
+
+While testing with the Neato, we found that one of our previous assumptions conecrning the Neato's bump sensor was incorrect. We believed that the Neato's bump sensor would have been able to register when the Neato bumped into the ball. However, in practice, the Neato was travelling too slow while the ball was moving in the opposite direction to activate the bump sensor. To identify when the Neato was "kicking" the ball, we used the Neato's LiDAR to simulate the bump. By detecting when the Neato was within a certain range of the ball, we are able to kick the ball and change the state. We continued to use the bump sensor to identify when the person was reached.
 
 ## Results
 
+A demo video can be found [here](https://www.youtube.com/shorts/1TKgzT15Tm8).
+
 ## Reflection
 
-## Next Steps
+A challenge we faced during this project was the implementation of ORB and FLANN. While the OpenCV documentation could have been more forgiving, we worked through it together to understand which functions return keypoints, descriptors, etc.
+
+To improve this project, we should optimize our code so we can be able to increase the speed of the Neato. If our code was less computationally intensive, we would be able to sucessfully increase the speed of the Neato.
+
+Also, adding visualizations to the video feeds from the Neato would be helpful in the future. By drawing bounding boxes around our ROIs, we would be able to better see what the Neato is tracking and what areas we define to track.
+
+
+## Future
+
+Learning, understanding, and applying object descriptors (specifically ORB) was very applicable to computer vision research and projects that we are currently working on. In the RoboLab, Evan can implement the use of ORB on Hummingbird and in a project outside of Olin. Ayush is able to use these skills for a project he is currently working on for drone tracking.
