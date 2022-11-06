@@ -89,6 +89,9 @@ class FetchNode(Node):
     # determine if a specific destination has been reached
     SCAN_BOUND = 30
 
+    # This is the center x pixel position of the camera frame.
+    IMAGE_CENTER = 512
+
     def __init__(self):
         """
         This is the constructor for the FetchNeato Node, which defines the node's
@@ -191,45 +194,83 @@ class FetchNode(Node):
         return key
     
     def get_kps_descs(self, image):
+        """
+        This function returns the keypoints and image descriptors (obtained
+        using ORB) of the inputted image.
+        """
         gray_img = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
         kps, descs = self.orb.detectAndCompute(gray_img, None)
         return kps, descs
 
     def get_ref_img_kps_descs(self):
+        """
+        This function obtains and filters the keypoints and image descriptors
+        of the stored reference image (which contains both the picture of the
+        ball and the person).
+        """
+        # Obtains all keypoints and image descriptors from the reference image.
         kps, descs = self.get_kps_descs(self.reference_image)
 
         for kp, desc in zip(kps, descs):
+            # If the keypoint is within the bounding box of the person, append
+            # the keypoint and descriptor to the stored list of person keypoints
+            # and image descriptors.
             if kp.pt[0] > self.person_corner_one[0] and kp.pt[0] < self.person_corner_two[0] and\
                 kp.pt[1] > self.person_corner_one[1] and kp.pt[1] < self.person_corner_two[1]:
                 self.person_kps.append(kp)
                 self.person_descs.append(desc)
+            # If the keypoint is within the bounding box of the ball, append
+            # the keypoint and descriptor to the stored list of ball keypoints
+            # and image descriptors.
             if kp.pt[0] > self.ball_corner_one[0] and kp.pt[0] < self.ball_corner_two[0] and\
                 kp.pt[1] > self.ball_corner_one[1] and kp.pt[1] < self.ball_corner_two[1]:
                 self.ball_kps.append(kp)
                 self.ball_descs.append(desc)
+        # Convert the arrays into numpy arrays
         self.person_kps = np.array(self.person_kps)
         self.person_descs = np.array(self.person_descs)
         self.ball_kps = np.array(self.ball_kps)
         self.ball_descs = np.array(self.ball_descs)
+        
+        # Change the Neato's state to tracking the ball.
         self.neatoState = NeatoState.TRACK_BALL
         
     def teleop_to_start(self):
+        """
+        This function listens to the user's keyboard inputs and publishes
+        velocity commands corresponding to those keys until a keyboard
+        interrupt is triggered.
+        """
         try:
             while True:
                 self.key = self.get_key()
+                # This corresponds to Ctrl+C on most keyboards, which will raise
+                # a keyboard interrupt.
                 if self.key == "\x03":
                     self.vel_pub.publish(self.key_to_vel["s"])
                     raise KeyboardInterrupt
                 if self.key in self.key_to_vel.keys():
                     self.vel_pub.publish(self.key_to_vel[self.key])
         except KeyboardInterrupt:
+            # Change the neato's state to analyzing the reference image once
+            # a keyboard interrupt has been initiated.
             self.neatoState = NeatoState.ANALYZE_REF_IMAGE
             return
 
     def drive_to_object(self, curr_center_x):
-        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(512-curr_center_x)/self.P_CONSTANT)))
+        """
+        This function sends angular and linear velocities to the Neato based
+        on the difference of the center pixel of the screen and the average
+        center of all the matched keypoints.
+        """
+        self.vel_pub.publish(Twist(linear=Vector3(x=0.2), angular=Vector3(z=(self.IMAGE_CENTER-curr_center_x)/self.P_CONSTANT)))
 
-    def celebration(self):          
+    def celebration(self):
+        """
+        This function defines the celebration feature of the Neato, which
+        continuously does a dance until the bump sensor is pressed by the
+        person it navigated to.
+        """   
         self.vel_pub.publish(self.key_to_vel["x"])
         time.sleep(1)
         self.vel_pub.publish(self.key_to_vel["a"])
@@ -239,10 +280,16 @@ class FetchNode(Node):
         self.vel_pub.publish(self.key_to_vel["w"])
         time.sleep(1)
         if self.bump:
+            # Once the bump sensor has been pressed, stop the Neato and change
+            # its state to FETCH_DONE.s
             self.vel_pub.publish(self.key_to_vel["s"])
             self.neatoState = NeatoState.FETCH_DONE
 
-    def process_mouse_click(self, event, x, y, flag, im):
+    def process_mouse_click(self, event, x, y):
+        """
+        This function handles the process for obtaining the bounding box around
+        the person and the ball by storing mouse click positions.
+        """
         if self.neatoState == NeatoState.ANALYZE_REF_IMAGE and event == cv.EVENT_FLAG_LBUTTON:
             if self.drawBoxState == DrawBoxState.GET_BALL_CORNER_ONE:
                 self.ball_corner_one = (x,y)
@@ -257,6 +304,10 @@ class FetchNode(Node):
                 self.person_corner_two = (x,y)
 
     def draw_bounding_boxes(self):
+        """
+        This function stores the reference image and displays it to the user,
+        allowing them to select the bounding box by clicking on it.
+        """
         if self.reference_image is None:
             self.reference_image = self.image
         else:
@@ -264,67 +315,116 @@ class FetchNode(Node):
             cv.waitKey(5)
         
     def get_matches(self, ref_kps, ref_descs):
+        """
+        This function calculates matches between the keypoints of the current
+        image and a specific area within the reference image (either the ball
+        or the person).
+        """
         ref_kp_matches = []
         curr_kp_matches = []
 
         try:
+            # Get the keypoints and image descriptors of the current frame
             curr_kps, curr_descs = self.get_kps_descs(self.image)
+
+            # Get matches between the current image and inputted reference
+            # using FLANN, with 2 nearest neighbors.
             matches = self.flann.knnMatch(ref_descs, curr_descs, 2)
-            matchesMask = [[0,0] for i in range(len(matches))]
-            for i, (dmatch_one, dmatch_two) in enumerate(matches):
+            for (dmatch_one, dmatch_two) in matches:
+                # If the two matches are within a certain distance of each other
+                # (not conflicting heavily), then append the closest match to
+                # the list of matches
                 if dmatch_one.distance < self.GOOD_MATCH_THRESHOLD * dmatch_two.distance:
                     ref_kp_matches.append(ref_kps[dmatch_one.queryIdx])
                     curr_kp_matches.append(curr_kps[dmatch_one.trainIdx])
-                    matchesMask[i] = [1,0]
-            draw_params = dict(matchColor = (0,255,0),
-                    singlePointColor = (255,0,0),
-                    matchesMask = matchesMask,
-                    flags = cv.DrawMatchesFlags_DEFAULT)
-            corrected_img = cv.drawMatchesKnn(self.reference_image,ref_kps,self.image,curr_kps,matches,None,**draw_params)
-            cv.imshow("Detected Matches", corrected_img)
-            cv.waitKey(5)
         except:
             pass
         return ref_kp_matches, curr_kp_matches
 
     def drive_to_ball(self):
-        matched_ref_kps, matched_curr_kps = self.get_matches(self.ball_kps, self.ball_descs)
+        """
+        This function commands the Neato to drive towards the ball based
+        on the matched keypoints between the current frame and the ones
+        stored around the ball in the reference image.
+        """
+        # Obtain matches between the ball and the current frame
+        _, matched_curr_kps = self.get_matches(self.ball_kps, self.ball_descs)
+        
+        # If no matches are found, exit this function.
         if len(matched_curr_kps) == 0:
             return
-        avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
+
+        # Calculate the average x position of the matched keypoints
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
-        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
+
+        # Drive to the object based on the current average keypoint position
+        self.drive_to_object(avg_curr_kp_x)
+
+        # If there is an object directly in front of the Neato (assumed to be
+        # the ball), then turn 180 degrees and begin tracking the person.
         if self.scan:
             self.vel_pub.publish(self.key_to_vel["d"])
-            time.sleep(3.14)
+            time.sleep(np.pi)
             self.neatoState = NeatoState.TRACK_PERSON
 
     def drive_to_person(self):
-        matched_ref_kps, matched_curr_kps = self.get_matches(self.person_kps, self.person_descs)
+        """
+        This function commands the Neato to drive towards the person based on
+        the matches between the stored references of the person and the current
+        image.
+        """
+        # Obtain matches between the referenced person and the current frame
+        _, matched_curr_kps = self.get_matches(self.person_kps, self.person_descs)
+
+        # If no matches are found, exit this function
         if len(matched_curr_kps) == 0:
             return
-        avg_ref_kp_x = sum([kp.pt[0] for kp in matched_ref_kps])/len(matched_ref_kps)
+
+        # Calculate the average x position of matches and drive towards that
+        # average position
         avg_curr_kp_x = sum([kp.pt[0] for kp in matched_curr_kps])/len(matched_curr_kps)
-        self.drive_to_object(avg_ref_kp_x, avg_curr_kp_x)
+        self.drive_to_object(avg_curr_kp_x)
+
+        # If the bump sensor is triggered (assumed to be bumping the person),
+        # then change states to CELEBRATION
         if self.bump:
             self.neatoState = NeatoState.CELEBRATION
 
     def run_loop(self):
-        print(self.neatoState)
+        """
+        This is the main loop of the FetchNode. Based on the current
+        state of the Neato, the corresponding function is called, commanding
+        the current action of the Neato.
+        """
+        # This is the teleop start of the Neato, which allows the user to palce
+        # the Neato in the desired start position, facing the ball and the person.
         if self.neatoState == NeatoState.DRIVE_NEATO_START:
             self.teleop_to_start()
+        # Once in the desired start position, the current frame is analyzed for
+        # a user-inputted bounding box around the ball and the person, which
+        # are both analyzed for keypoints and image descriptors.
         elif self.neatoState == NeatoState.ANALYZE_REF_IMAGE:
             self.draw_bounding_boxes()
             if self.person_corner_two is not None:
                 self.get_ref_img_kps_descs()
+        # The Neato is then directed to drive towards the ball by obtianing
+        # matches between the current frame and the ball keypoints.
         elif self.neatoState == NeatoState.TRACK_BALL:
             self.drive_to_ball()
+        # After the Neato kicks the ball, it begins return to the person, which
+        # is done by obtaining matches between the current frame and the person
+        # keypoints.
         elif self.neatoState == NeatoState.TRACK_PERSON:
             self.drive_to_person()
+        # Once the Neato successfully reaches the person, it begins celebrating.
         elif self.neatoState == NeatoState.CELEBRATION:
             self.celebration()
 
 def main(args=None):
+    """
+    This is the main function of this script, which establishes rclpy, instantiates
+    the FetchNode, triggered the entire fetch workflow on the Neato.
+    """
     rclpy.init(args=args)
     node = FetchNode()
     rclpy.spin(node)
